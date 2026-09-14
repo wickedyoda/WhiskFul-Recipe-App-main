@@ -779,6 +779,33 @@
 <script>
 const API = '';
 let token = localStorage.getItem('token');
+let tokenExpiry = localStorage.getItem('tokenExpiry');
+let loginTimestamp = localStorage.getItem('loginTimestamp');
+
+// Check if token exists but is expired (15-day timeout)
+function isTokenExpired() {
+  if (!token) return true;
+  if (!loginTimestamp) return true;
+  let loginTime = parseInt(loginTimestamp);
+  let now = Date.now();
+  let daysSinceLogin = (now - loginTime) / (1000 * 60 * 60 * 24);
+  return daysSinceLogin > 15;
+}
+
+// Clear all auth data on expiry
+function clearAuthData() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('tokenExpiry');
+  localStorage.removeItem('loginTimestamp');
+  localStorage.removeItem('userRole');
+  localStorage.removeItem('isReadonly');
+  localStorage.removeItem('userEmail');
+}
+
+if (token && isTokenExpired()) {
+  clearAuthData();
+  token = null;
+}
 let currentRecipeId = null;
 let currentPlanId = null;
 let currentGroceryId = null;
@@ -1422,7 +1449,12 @@ async function deleteAccount() {
 
 let cookingRecipe = null;
 
-if (token) initApp();
+if (token && !isTokenExpired()) {
+  initApp();
+} else if (token && isTokenExpired()) {
+  clearAuthData();
+  token = null;
+}
 
 // Check for public recipe share URL (no auth required)
 const pathMatch = window.location.pathname.match(/^\/recipes\/public\/(.+)$/);
@@ -1463,6 +1495,7 @@ async function login() {
     }
     token = data.access_token;
     localStorage.setItem('token', token);
+    localStorage.setItem('loginTimestamp', Date.now().toString());
     await initApp();
   } catch (err) {
     status.textContent = 'Unable to reach the server. Please try again.';
@@ -1522,7 +1555,12 @@ async function register() {
   document.getElementById('regEmail').value=''; document.getElementById('regPassword').value=''; document.getElementById('regName').value='';
 }
 function logout() {
-  localStorage.removeItem('token'); token = null; location.reload();
+  localStorage.removeItem('token');
+    localStorage.removeItem('tokenExpiry');
+    localStorage.removeItem('loginTimestamp');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('isReadonly');
+    token = null; location.reload();
 }
 function showRegister() {
   document.getElementById('loginSection').classList.add('hidden');
@@ -1549,6 +1587,10 @@ async function initApp() {
   if (!me.ok) {
     const data = await me.json().catch(() => ({detail:'not authorized'}));
     localStorage.removeItem('token');
+    localStorage.removeItem('tokenExpiry');
+    localStorage.removeItem('loginTimestamp');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('isReadonly');
     token = null;
     document.getElementById('loginStatus').textContent = data.detail || 'Your session is no longer valid. Please sign in again.';
     return;

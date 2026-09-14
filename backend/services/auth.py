@@ -13,7 +13,7 @@ from jwt import PyJWTError
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE = timedelta(minutes=60 * 24)
+ACCESS_TOKEN_EXPIRE = timedelta(days=15)
 PASSWORD_RESET_EXPIRE = timedelta(hours=1)
 PASSWORD_HISTORY_LIMIT = 5
 
