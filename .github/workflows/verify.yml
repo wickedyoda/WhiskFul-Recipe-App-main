@@ -136,7 +136,7 @@ jobs:
         with:
           languages: python
           queries: security-extended
-          config: .github/codeql/codeql-config.yml
+          config-file: .github/codeql/codeql-config.yml
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -179,14 +179,25 @@ jobs:
           push: false
           tags: recipe-app-backend:${{ github.sha }}
 
-      - name: Trivy backend scan
+      - name: Trivy backend vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: recipe-app-backend:${{ github.sha }}
+          scanners: "vuln"
           format: "sarif"
           output: "trivy-backend.sarif"
           severity: "CRITICAL,HIGH"
           exit-code: "0"
+
+      - name: Trivy backend image secret scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: recipe-app-backend:${{ github.sha }}
+          scanners: "secret"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          skip-dirs: "/opt/venv/lib/python3.14/site-packages/yt_dlp/extractor"
 
       - name: Build frontend image for scan
         uses: docker/build-push-action@v7
@@ -196,14 +207,24 @@ jobs:
           push: false
           tags: recipe-app-frontend:${{ github.sha }}
 
-      - name: Trivy frontend scan
+      - name: Trivy frontend vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: recipe-app-frontend:${{ github.sha }}
+          scanners: "vuln"
           format: "sarif"
           output: "trivy-frontend.sarif"
           severity: "CRITICAL,HIGH"
           exit-code: "0"
+
+      - name: Trivy frontend image secret scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: recipe-app-frontend:${{ github.sha }}
+          scanners: "secret"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
 
       - name: Upload Trivy backend scan results
         uses: github/codeql-action/upload-sarif@v4
