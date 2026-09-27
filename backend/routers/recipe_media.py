@@ -3,6 +3,7 @@
 import os
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -14,6 +15,26 @@ from backend.services.auth import get_current_user
 from backend.services.media_text import extract_text_from_file
 
 router = APIRouter(prefix="/recipes/{recipe_id}/media", tags=["recipe-media"])
+
+# Base directory for uploaded recipe media, matching the layout this router has
+# always used (backend/media/recipes/<recipe_id>/media/...). The stored
+# file_path is a relpath against the backend directory, so changing the layout
+# would orphan every existing RecipeMedia row. MEDIA_ROOT is deliberately not
+# consulted here: ingest.py owns that setting for its own working directories.
+MEDIA_BASE = Path("backend/media/recipes").resolve()
+
+
+def _safe_join(*parts: str) -> str:
+    """Join path segments under MEDIA_BASE, rejecting anything that escapes it.
+
+    Uses Path.resolve() so '..' segments and symlinks are collapsed before the
+    containment check, then compares with is_relative_to() rather than a string
+    prefix (which would wrongly accept a sibling like /media-evil).
+    """
+    candidate = MEDIA_BASE.joinpath(*parts).resolve()
+    if not candidate.is_relative_to(MEDIA_BASE):
+        raise HTTPException(status_code=400, detail="Invalid media path")
+    return str(candidate)
 
 # Allowed file types for recipe media
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -49,11 +70,13 @@ def upload_recipe_media(
             detail=f"Unsupported file type: {ext}. Allowed: images (PNG/JPG/WebP), PDFs, DOC/DOCX, TXT/MD/CSV"
         )
 
-    # Save file
-    dest_dir = os.path.join("backend", "media", "recipes", str(recipe_id), "media")
+    # Save file. The destination is built from the (server-generated) filename
+    # under a per-recipe directory; _safe_join confirms it stays inside the
+    # media root regardless of the recipe_id path segment.
+    dest_dir = _safe_join(str(recipe_id), "media")
     os.makedirs(dest_dir, exist_ok=True)
     name = f"{int(time.time())}_{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join(dest_dir, name)
+    file_path = _safe_join(str(recipe_id), "media", name)
 
     # Read file content
     content = file.file.read()
@@ -151,7 +174,7 @@ def _generate_thumbnail(file_path: str, ext: str) -> str | None:
     """Generate a thumbnail for an image file."""
     try:
         from PIL import Image  # noqa: PLC0415
-        thumb_dir = os.path.join(os.path.dirname(file_path), "thumbs")
+        thumb_dir = _safe_join(os.path.relpath(os.path.dirname(file_path), MEDIA_BASE), "thumbs")
         os.makedirs(thumb_dir, exist_ok=True)
         thumb_name = f"thumb_{os.path.basename(file_path)}"
         thumb_path = os.path.join(thumb_dir, thumb_name)

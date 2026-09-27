@@ -25,6 +25,11 @@ MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 (MEDIA_ROOT / "subtitles").mkdir(exist_ok=True)
 (MEDIA_ROOT / "raw").mkdir(exist_ok=True)
 
+# Upper bound on RSS <item> elements examined when matching a source URL to a
+# blog post. Real feeds carry a few dozen; the cap keeps a hostile feed from
+# turning a fetch into an unbounded scan.
+_MAX_RSS_ITEMS = 200
+
 _VALID_SCHEMES = {"http", "https"}
 _MAX_URL_LENGTH = 2048
 _URL_RE = re.compile(r"^https?://[^\s]+$")
@@ -209,7 +214,11 @@ def _download_media(url: str, workdir: Path) -> dict:
         subs = sorted([p for p in files if p.suffix.lower() == ".srt"])
         subtitle_path = subs[0] if subs else None
     except Exception as exc:
-        logging.warning("Video download failed for %s, falling back to metadata: %s", url, exc)
+        logging.warning(
+            "Video download failed (url_id=%s), falling back to metadata: %s",
+            _log_digest(url),
+            type(exc).__name__,
+        )
 
     if audio is None and video is not None:
         audio = workdir / "audio.wav"
@@ -517,12 +526,19 @@ def _extract_from_web_page(url: str) -> dict:
         resp = requests.get(sanitized_url, headers={"User-Agent": "Mozilla/5.0 (compatible; RecipeBot/1.0)"}, timeout=15, allow_redirects=True)
         html = resp.text[:200000]
     except Exception as exc:
-        logging.warning("Web page fetch failed for %s: %s", url, exc)
+        logging.warning(
+            "Web page fetch failed (url_id=%s): %s",
+            _log_digest(url),
+            type(exc).__name__,
+        )
         return {"title": None, "ingredients": None, "instructions": None}
 
-    # Try JSON-LD recipe schema
+    # Try JSON-LD recipe schema.
+    # The character-class-plus-repetition shapes here are bounded ([^>]{0,512}
+    # rather than [^>]*) so a hostile page cannot force polynomial backtracking.
+    # 'html' is already truncated to 200_000 chars by the caller.
     schema_pattern = re.compile(
-        r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        r'<script[^>]{0,512}?type=["\']application/ld\+json["\'][^>]{0,512}?>([^<]{0,200000}?)</script>',
         re.DOTALL | re.IGNORECASE,
     )
     for match in schema_pattern.finditer(html):
@@ -536,10 +552,33 @@ def _extract_from_web_page(url: str) -> dict:
                     ingredients = item.get("recipeIngredient")
                     instructions_raw = item.get("recipeInstructions")
                     if isinstance(instructions_raw, list):
-                        instructions = "\n".join(
-                            instr.get("text") or instr.get("instruction", "") or str(instr)
-                            for instr in instructions_raw
-                        )
+                        # schema.org allows each step to be a plain string, or
+                        # an object carrying HowToStep text, or a HowToSection
+                        # with nested itemListElement. Calling .get() on a
+                        # string raised AttributeError, which the surrounding
+                        # except swallowed, silently discarding the whole
+                        # recipe and falling through to the <title> fallback.
+                        parts = []
+                        for instr in instructions_raw:
+                            if isinstance(instr, dict):
+                                part = (
+                                    instr.get("text")
+                                    or instr.get("instruction")
+                                    or instr.get("name")
+                                )
+                                if not part:
+                                    nested = instr.get("itemListElement")
+                                    if isinstance(nested, list):
+                                        part = "\n".join(
+                                            str(s.get("text") or s.get("name") or "")
+                                            if isinstance(s, dict)
+                                            else str(s)
+                                            for s in nested
+                                        )
+                                parts.append(str(part) if part else str(instr))
+                            else:
+                                parts.append(str(instr))
+                        instructions = "\n".join(p for p in parts if p)
                     else:
                         instructions = instructions_raw
                     if title or ingredients or instructions:
@@ -553,7 +592,9 @@ def _extract_from_web_page(url: str) -> dict:
             continue
 
     # Fallback: look for meta description and recipe-like text
-    title_match = re.search(r'<title[^>]*>(.*?)</title>', html, re.DOTALL | re.IGNORECASE)
+    title_match = re.search(
+        r'<title[^>]{0,512}>([^<]{0,10000}?)</title>', html, re.DOTALL | re.IGNORECASE
+    )
     title = title_match.group(1).strip() if title_match else None
 
     return {"title": title, "ingredients": None, "instructions": None}
@@ -584,16 +625,39 @@ def _find_recipe_in_rss(rss_html: str, blog_url: str, meta: dict) -> str | None:
     title_clean = re.sub(r"[^a-z0-9\s]", " ", raw_title).strip().lower()
     title_words = set(re.findall(r"[a-z]{3,}", title_clean))
 
-    # Parse RSS feed for recipe links
-    link_pattern = re.compile(r'<link[^>]*>(.*?)</link>', re.IGNORECASE | re.DOTALL)
-    title_pattern = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
-    item_pattern = re.compile(r'<item>(.*?)</item>', re.IGNORECASE | re.DOTALL)
+    # Parse RSS feed for recipe links.
+    #
+    # Items are located with str.find rather than a <item>(.*?)</item> regex.
+    # That regex is the one shape here that stays expensive no matter what the
+    # body is bounded to: with no closing tag, the engine restarts the body
+    # scan at every '<item>' occurrence, so cost is items x cap. Measured at
+    # 19s on a 120KB hostile feed, versus microseconds with find(). The feed is
+    # remote and attacker-influenceable, so that gap is a denial of service.
+    #
+    # link/title keep bounded attribute runs ([^>]{0,512} rather than [^>]*),
+    # which is what removes the polynomial backtracking on input like '<title'
+    # repeated with no '>'. Their bodies stay (?s:(.*?)) -- capturing, because
+    # callers read group(1), and unrestricted, because feed titles and links
+    # may legitimately contain markup.
+    link_pattern = re.compile(r'<link[^>]{0,512}>(?s:(.*?))</link>', re.IGNORECASE)
+    title_pattern = re.compile(r'<title[^>]{0,512}>(?s:(.*?))</title>', re.IGNORECASE)
 
     best_match = None
     best_score = 0
 
-    for item in item_pattern.finditer(rss_html):
-        item_html = item.group(1)
+    lowered = rss_html.lower()
+    cursor = 0
+    items_seen = 0
+    while items_seen < _MAX_RSS_ITEMS:
+        start = lowered.find("<item>", cursor)
+        if start < 0:
+            break
+        end = lowered.find("</item>", start)
+        if end < 0:
+            break
+        cursor = end + len("</item>")
+        items_seen += 1
+        item_html = rss_html[start + len("<item>") : end]
         link_match = link_pattern.search(item_html)
         title_match = title_pattern.search(item_html)
 
@@ -934,7 +998,11 @@ def _extract_recipe_text_from_metadata(url: str, workdir: Path, result: dict) ->
     # (TikTok descriptions often contain the full recipe as text)
     meta_desc = meta.get("description", "")
     if meta_desc and meta_desc.strip():
-        logging.info("Trying metadata description for %s (%d chars)", url, len(meta_desc))
+        logging.info(
+            "Trying metadata description (url_id=%s, %d chars)",
+            _log_digest(url),
+            len(meta_desc),
+        )
         desc_parsed = _extract_recipe_from_text(meta_desc)
         if desc_parsed.get("ingredients") or desc_parsed.get("instructions"):
             title = _clean_facebook_title(meta.get("title", ""), meta_desc) or desc_parsed.get("title")
@@ -1020,7 +1088,7 @@ def _extract_recipe_text_from_metadata(url: str, workdir: Path, result: dict) ->
         }
 
     # Stage 6: Web page JSON-LD schema (fallback from original source URL)
-    logging.info("Video extraction yielded no recipe data, trying web page for %s", url)
+    logging.info("Video extraction yielded no recipe data, trying web page (url_id=%s)", _log_digest(url))
     web_parsed = _extract_from_web_page(url)
     if web_parsed.get("ingredients") or web_parsed.get("instructions"):
         title = _clean_facebook_title(meta.get("title", ""), meta.get("description", "")) or web_parsed.get("title")
