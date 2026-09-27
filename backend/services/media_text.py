@@ -34,7 +34,7 @@ def extract_text_from_file(file_path: str, filename: str) -> str:
 
 
 def _extract_pdf_text(file_path: str) -> str:
-    """Extract text from PDF using pdftotext (poppler-utils) or PyPDF2."""
+    """Extract text from PDF using pdftotext (poppler-utils) or pypdf."""
     # Try pdftotext first (fast, accurate)
     pdftotext = shutil.which("pdftotext")
     if pdftotext:
@@ -48,11 +48,11 @@ def _extract_pdf_text(file_path: str) -> str:
         except (subprocess.TimeoutExpired, OSError):
             pass
 
-    # Fallback: try PyPDF2
+    # Fallback: try pypdf
     try:
-        import PyPDF2  # noqa: PLC0415
+        import pypdf  # noqa: PLC0415
         with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = pypdf.PdfReader(f)
             pages = []
             for page in reader.pages:
                 text = page.extract_text() or ""

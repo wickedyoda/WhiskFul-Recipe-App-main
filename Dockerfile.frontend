@@ -1,4 +1,7 @@
-FROM nginx:stable-alpine
+FROM nginx:mainline-alpine
+
+# Refresh Alpine packages so Trivy sees patched OS libraries from the image repo.
+RUN apk upgrade --no-cache
 
 COPY frontend/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY frontend/src/index.html /usr/share/nginx/html/index.html

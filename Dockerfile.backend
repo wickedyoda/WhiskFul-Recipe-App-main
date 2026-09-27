@@ -1,4 +1,4 @@
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim-trixie AS builder
 
 # Install build tools and dev libraries
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir uv \
     && rm -rf /root/.cache/uv
 
 # Runtime stage - minimal packages only
-FROM python:3.14-slim
+FROM python:3.14-slim-trixie
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ffmpeg tesseract-ocr \
@@ -40,8 +40,14 @@ COPY CHANGELOG.md LICENSE PRIVACY.md /app/
 ENV PATH=/opt/venv/bin:$PATH
 ENV VIRTUAL_ENV=/opt/venv
 
+# Remove build-time Python packaging tools from the runtime layer; the app uses the
+# copied virtualenv and does not need pip/setuptools vendor bundles at runtime.
+RUN rm -rf /usr/local/lib/python*/site-packages/pip* \
+    /usr/local/lib/python*/site-packages/setuptools* \
+    /usr/local/lib/python*/site-packages/wheel*
+
 # Create media directories writable by non-root user
-RUN mkdir -p /media && chown -R appuser:appgroup /app /media
+RUN mkdir -p /media /app/backend/media && chown -R appuser:appgroup /app /media
 
 USER appuser
 
