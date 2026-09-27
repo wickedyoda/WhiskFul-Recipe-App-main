@@ -622,7 +622,14 @@ def _find_recipe_in_rss(rss_html: str, blog_url: str, meta: dict) -> str | None:
 
     # Extract title keywords from TikTok metadata
     raw_title = meta.get("title", "") or meta.get("description", "") or ""
-    title_clean = re.sub(r"[^a-z0-9\s]", " ", raw_title).strip().lower()
+    # Lowercase BEFORE stripping non-alphanumerics. Applying the character
+    # class first would treat every capital letter as "not [a-z]" and replace
+    # it with a space, so "Easy Pancakes" became "asy ancakes" and no 3+ letter
+    # word survived -- the overlap score below could then never reach its
+    # threshold, and RSS recipe discovery silently returned None for any title
+    # containing capitals. The item side (line below) already lowercases first;
+    # this makes the two symmetric.
+    title_clean = re.sub(r"[^a-z0-9\s]", " ", raw_title.lower()).strip()
     title_words = set(re.findall(r"[a-z]{3,}", title_clean))
 
     # Parse RSS feed for recipe links.
