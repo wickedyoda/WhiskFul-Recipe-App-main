@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import secrets
 import time
@@ -6,6 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from sqlalchemy import func as _func
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -77,12 +79,9 @@ def create_recipe(payload: RecipeCreate, db: Session = Depends(get_db), current_
 def list_recipes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), q: str = "", limit: int = 200):
     rows = db.query(Recipe).filter(Recipe.owner_id==current_user.id)
     # Also include recipes shared with the user's household
-    household_subq = (
-        db.query(household_recipes.c.recipe_id)
-        .join(household_members, household_members.c.household_id == household_recipes.c.household_id)
-        .filter(household_members.c.user_id == current_user.id)
-        .subquery()
-    )
+    household_subq = select(household_recipes.c.recipe_id).join(
+        household_members, household_members.c.household_id == household_recipes.c.household_id
+    ).where(household_members.c.user_id == current_user.id)
     rows = db.query(Recipe).filter(
         (Recipe.owner_id == current_user.id) | (Recipe.id.in_(household_subq))
     )
@@ -244,9 +243,14 @@ def reprocess_recipe(recipe_id: int, db: Session = Depends(get_db), current_user
     workdir.mkdir(parents=True, exist_ok=True)
     try:
         result = _download_media(r.source_url, workdir)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Media download failed"))
         parsed = _extract_recipe_text_from_metadata(r.source_url, workdir, result)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Re-processing failed: {exc}") from exc
+        logging.warning("Re-processing failed for recipe %s: %s", r.id, exc)
+        raise HTTPException(status_code=502, detail="Re-processing failed") from exc
 
     new_ingredients = parsed.get("ingredients")
     new_instructions = parsed.get("instructions")
