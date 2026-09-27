@@ -151,7 +151,8 @@ def _download_media(url: str, workdir: Path) -> dict:
         with yt_dlp.YoutubeDL(meta_opts) as ydl:  # type: ignore[arg-type]
             info = ydl.extract_info(sanitized_url, download=False)
     except Exception as exc:
-        raise RuntimeError("media download failed") from exc
+        logging.warning("Metadata extraction failed for %s: %s", url, exc)
+        return {"ok": False, "error": f"Unable to extract metadata from URL (possible 404 or private content). Error: {exc}"}
 
     # Store metadata for use by _extract_recipe_text_from_metadata
     meta = {

@@ -5,7 +5,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
-from sqlalchemy import func as _func
+from sqlalchemy import func as _func, select
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -78,9 +78,9 @@ def list_recipes(db: Session = Depends(get_db), current_user: User = Depends(get
     rows = db.query(Recipe).filter(Recipe.owner_id==current_user.id)
     # Also include recipes shared with the user's household
     household_subq = (
-        db.query(household_recipes.c.recipe_id)
+        select(household_recipes.c.recipe_id)
         .join(household_members, household_members.c.household_id == household_recipes.c.household_id)
-        .filter(household_members.c.user_id == current_user.id)
+        .where(household_members.c.user_id == current_user.id)
         .subquery()
     )
     rows = db.query(Recipe).filter(
