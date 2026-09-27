@@ -1,0 +1,46 @@
+name: Dependabot Refresh
+
+# Dependabot rebases a PR when it detects a new upstream version, but not when
+# the base branch simply moves ahead. On a repo where security fixes land on
+# master often, that leaves Dependabot PRs drifting: the diff against master
+# starts reverting unrelated work, which is how PR #214 came to propose
+# reverting the entire security remediation. This job rebases open Dependabot
+# PRs onto current master and reports any that it could not rebase.
+
+on:
+  schedule:
+    # Mondays at 06:17 UTC, after Dependabot's own Monday-morning run
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Report only; do not rebase"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  refresh:
+    name: Rebase stale Dependabot PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Rebase Dependabot PRs onto master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry-run || 'false' }}
+        run: python scripts/refresh_dependabot_prs.py
+
+      - name: Summary
+        if: always()
+        run: cat dependabot-refresh-summary.md >> "$GITHUB_STEP_SUMMARY"
