@@ -58,6 +58,14 @@ def _is_private_host(hostname: str) -> bool:
     return False
 
 
+def _log_safe(value: object, max_len: int = 200) -> str:
+    """Strip control characters and bound length so untrusted values cannot
+    forge log records (CodeQL: py/log-injection)."""
+    text = str(value)
+    text = "".join(ch for ch in text if ch.isprintable())
+    return text[:max_len]
+
+
 def _sanitize_media_url(url: str) -> str:
     if not isinstance(url, str) or not url.strip():
         raise ValueError("url must be a non-empty string")
@@ -151,8 +159,8 @@ def _download_media(url: str, workdir: Path) -> dict:
         with yt_dlp.YoutubeDL(meta_opts) as ydl:  # type: ignore[arg-type]
             info = ydl.extract_info(sanitized_url, download=False)
     except Exception as exc:
-        logging.warning("Metadata extraction failed for %s: %s", url, exc)
-        return {"ok": False, "error": f"Unable to extract metadata from URL (possible 404 or private content). Error: {exc}"}
+        logging.warning("Metadata extraction failed for %s: %s", _log_safe(url), _log_safe(exc))
+        return {"ok": False, "error": "Unable to extract metadata from URL (possible 404 or private content)"}
 
     # Store metadata for use by _extract_recipe_text_from_metadata
     meta = {
