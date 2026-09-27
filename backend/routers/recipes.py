@@ -6,7 +6,8 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
-from sqlalchemy import func as _func, select
+from sqlalchemy import func as _func
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.database import get_db

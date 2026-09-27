@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -58,12 +59,15 @@ def _is_private_host(hostname: str) -> bool:
     return False
 
 
-def _log_safe(value: object, max_len: int = 200) -> str:
-    """Strip control characters and bound length so untrusted values cannot
-    forge log records (CodeQL: py/log-injection)."""
-    text = str(value)
-    text = "".join(ch for ch in text if ch.isprintable())
-    return text[:max_len]
+def _log_digest(value: object, length: int = 12) -> str:
+    """Return a short SHA-256 digest of an untrusted value for log correlation.
+
+    The digest is derived hex, so no caller-controlled character can reach the
+    log record. This deliberately avoids logging raw user input: CodeQL's
+    py/log-injection cannot prove a filtering helper sanitizes its argument,
+    so the value itself must not flow into a logging call.
+    """
+    return hashlib.sha256(str(value).encode("utf-8", "replace")).hexdigest()[:length]
 
 
 def _sanitize_media_url(url: str) -> str:
@@ -123,7 +127,11 @@ def _extract_metadata(url: str, workdir: Path) -> dict:
             "duration": info.get("duration"),
         }
     except Exception as exc:
-        logging.warning("Metadata extraction failed for %s: %s", url, exc)
+        logging.warning(
+            "Thumbnail metadata extraction failed (url_id=%s): %s",
+            _log_digest(url),
+            type(exc).__name__,
+        )
         return {"title": None, "description": None, "uploader": None, "thumbnails": [], "duration": None}
 
 
@@ -159,7 +167,12 @@ def _download_media(url: str, workdir: Path) -> dict:
         with yt_dlp.YoutubeDL(meta_opts) as ydl:  # type: ignore[arg-type]
             info = ydl.extract_info(sanitized_url, download=False)
     except Exception as exc:
-        logging.warning("Metadata extraction failed for %s: %s", _log_safe(url), _log_safe(exc))
+        logging.warning(
+            "Metadata extraction failed (url_id=%s): %s: %s",
+            _log_digest(url),
+            type(exc).__name__,
+            _log_digest(exc, 64),
+        )
         return {"ok": False, "error": "Unable to extract metadata from URL (possible 404 or private content)"}
 
     # Store metadata for use by _extract_recipe_text_from_metadata
