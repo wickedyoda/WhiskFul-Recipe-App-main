@@ -34,7 +34,15 @@ except ImportError:
     SessionLocal = sessionmaker(bind=engine)
 
 GUEST_EMAIL = 'guest@whiskful.app'
-GUEST_PASSWORD = 'guest123!'
+# Read from the environment rather than hardcoding: a committed default password
+# becomes a known credential for any deployment that seeds demo data without
+# overriding it. Seeding fails fast with a clear message if it is unset.
+GUEST_PASSWORD = os.environ.get("DEMO_GUEST_PASSWORD", "")
+if not GUEST_PASSWORD:
+    raise SystemExit(
+        "DEMO_GUEST_PASSWORD is not set. Export a password before seeding demo "
+        "data, e.g. DEMO_GUEST_PASSWORD=\"$(openssl rand -base64 18)\"."
+    )
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -365,7 +373,10 @@ def main():
         ])
 
         db.commit()
-        print(f"\n✅ Seeded demo guest account: {GUEST_EMAIL} / {GUEST_PASSWORD}")
+        # Do not echo the password: CI logs are retained and often readable by
+        # anyone with repo or Actions access.
+        print(f"\n✅ Seeded demo guest account: {GUEST_EMAIL}")
+        print("   (password was read from DEMO_GUEST_PASSWORD and is not shown)")
         print(f"   - {len(DEMO_RECIPES)} recipes")
         print(f"   - {len(all_tags)} tags")
         print("   - 2 grocery lists (10 + 5 items)")

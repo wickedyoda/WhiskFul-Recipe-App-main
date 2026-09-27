@@ -5,30 +5,61 @@ import shutil
 import subprocess  # noqa: S404  # nosec B404 - required for textract on user-uploaded documents
 from pathlib import Path
 
+# Uploaded media lives under this tree. Any path reaching an extractor is
+# resolved and required to stay inside it, so a traversal attempt in a stored
+# file_path cannot be used to read arbitrary files from the host.
+MEDIA_ROOT = Path("backend/media").resolve()
+
+
+def _resolve_under_media_root(file_path: str) -> str | None:
+    """Return the resolved path if it lies under MEDIA_ROOT, else None.
+
+    resolve() collapses '..' segments and symlinks before the containment
+    check, and is_relative_to() is used instead of a string prefix so a
+    sibling directory sharing a name prefix is not accepted.
+    """
+    try:
+        candidate = Path(file_path).resolve()
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_relative_to(MEDIA_ROOT):
+        return None
+    return str(candidate)
+
 
 def extract_text_from_file(file_path: str, filename: str) -> str:
     """Extract text content from uploaded media files.
 
     Supports: PDF, DOCX, images (PNG/JPG), and text files.
     Returns extracted text or empty string on failure.
+
+    `file_path` originates from an upload request, so it is resolved and
+    required to sit under the backend media tree before any extractor opens it.
+    Callers that build the path themselves still get the check applied here, at
+    the point of use, rather than relying on every caller to remember it.
     """
+    resolved = _resolve_under_media_root(file_path)
+    if resolved is None:
+        logging.warning("Refusing to extract text from path outside media root")
+        return ""
+
     suffix = Path(filename).suffix.lower()
     extracted = ""
 
     if suffix == ".pdf":
-        extracted = _extract_pdf_text(file_path)
+        extracted = _extract_pdf_text(resolved)
     elif suffix in (".docx",):
-        extracted = _extract_docx_text(file_path)
+        extracted = _extract_docx_text(resolved)
     elif suffix in (".doc",):
-        extracted = _extract_doc_text(file_path)
+        extracted = _extract_doc_text(resolved)
     elif suffix in (".txt", ".md", ".csv"):
         try:
-            with open(file_path, errors="ignore") as f:
+            with open(resolved, errors="ignore") as f:
                 extracted = f.read(10000)  # Cap at 10k chars
         except OSError:
             pass
     elif suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
-        extracted = _extract_image_text(file_path)
+        extracted = _extract_image_text(resolved)
 
     return extracted.strip()[:50000]  # Cap at 50k chars
 

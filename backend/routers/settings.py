@@ -15,6 +15,26 @@ from backend.models import Role, User
 from backend.services.auth import require_role
 from backend.services.email import send_email
 
+
+def _redact_db_url(db_url: str) -> str:
+    """Return a DSN safe to expose: credentials replaced, host/db retained.
+
+    Keeps enough for an operator to tell which database is in use without
+    disclosing the username or password embedded in the connection string.
+    """
+    try:
+        parsed = urlparse(db_url)
+    except ValueError:
+        return "<unparseable>"
+    if not parsed.password:
+        return db_url
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    user = parsed.username or ""
+    return f"{parsed.scheme}://{user}:***@{host}{parsed.path}"
+
+
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
@@ -204,7 +224,14 @@ def download_backup(
 
 
 def _update_env(key: str, value: str):
-    """Update or add a key=value pair in the .env file."""
+    """Update or add a key=value pair in the .env file.
+
+    The file is rewritten with owner-only permissions (0600) because it holds
+    SMTP credentials in plaintext by design: the backend reads SMTP_PASSWORD
+    back from this file at startup, so the value cannot be stored hashed the
+    way a user password can. Restricting the mode is what keeps that plaintext
+    from being world-readable.
+    """
     env_path = ".env"
     lines = []
     found = False
@@ -218,8 +245,16 @@ def _update_env(key: str, value: str):
                     lines.append(line)
     if not found:
         lines.append(f"{key}={value}\n")
-    with open(env_path, "w") as f:
-        f.writelines(lines)
+    fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.writelines(lines)
+    except Exception:
+        os.close(fd)
+        raise
+    # os.open only applies the mode when creating; enforce it for existing files
+    # too, which may have been created by docker compose with 0644.
+    os.chmod(env_path, 0o600)
 
 
 @router.post("/smtp", response_model=dict)
@@ -291,10 +326,13 @@ def db_health(_: User = Depends(require_role(Role.admin))):
         connected = True
     except Exception as exc:
         connected = False
+        # Log the detail server-side; return only a status. The raw exception
+        # can carry driver text, connection details, or credentials.
+        logging.warning("Database connectivity check failed: %s", type(exc).__name__, exc_info=True)
         return {
             "status": "unhealthy",
             "connected": False,
-            "error": str(exc),
+            "error": "Database connectivity check failed",
         }
     finally:
         db.close()
@@ -309,7 +347,9 @@ def db_health(_: User = Depends(require_role(Role.admin))):
         "status": "healthy",
         "connected": connected,
         "database_type": db_type,
-        "database_url": db_url,
+        # Redacted: the DSN embeds the DB user and password, so returning it
+        # verbatim would hand credentials to any caller of this endpoint.
+        "database_url": _redact_db_url(db_url),
         "table_count": len(tables),
         "tables": sorted(tables),
     }
@@ -406,7 +446,10 @@ def db_diagnose(_: User = Depends(require_role(Role.admin))):
         results["status"] = "completed"
     except Exception as exc:
         results["status"] = "error"
-        results["error"] = str(exc)
+        # Detail logged, not returned: these are admin-only endpoints, but an
+        # exception string can disclose schema and connection internals.
+        logging.warning("Database diagnostics failed: %s", type(exc).__name__, exc_info=True)
+        results["error"] = "Database diagnostics failed; see server logs"
     finally:
         db.close()
 
@@ -496,14 +539,20 @@ def db_repair(_: User = Depends(require_role(Role.admin))):
                         if missing:
                             repairs.append(f"WARNING: Table '{table_name}' missing columns: {missing}")
                 except Exception as exc:
-                    repairs.append(f"Could not inspect table {table_name}: {exc}")
+                    logging.debug("Table inspection failed for %s: %s", table_name, type(exc).__name__)
+                    repairs.append(f"Could not inspect table {table_name}")
 
         results = {
             "status": "ok",
             "repairs_performed": repairs if repairs else ["No issues found — database is healthy"],
         }
     except Exception as exc:
-        results = {"status": "error", "error": str(exc), "repairs_performed": repairs}
+        logging.warning("Database repair failed: %s", type(exc).__name__, exc_info=True)
+        results = {
+            "status": "error",
+            "error": "Database repair failed; see server logs",
+            "repairs_performed": repairs,
+        }
     finally:
         db.close()
 
