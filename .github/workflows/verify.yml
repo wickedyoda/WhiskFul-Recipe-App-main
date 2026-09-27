@@ -76,13 +76,17 @@ jobs:
           pip install pytest pytest-cov
 
       - name: Run tests
-        working-directory: ./backend
+        # Must run from the repository root, not ./backend: the tests live in
+        # ./tests and import `backend.app`. Running pytest with cwd=./backend
+        # collected nothing, so this step exited 5 ("no tests ran") -- and the
+        # `|| true` that used to follow swallowed it. The suite had therefore
+        # never actually executed in CI.
         env:
           DATABASE_URL: mysql+mysqlconnector://recipes:recipspass@localhost:3306/recipes_test
           SECRET_KEY: test-secret
           MEDIA_ROOT: /tmp/media-test
         run: |
-          pytest -q
+          pytest -q tests/
 
   security-sast-python:
     name: Python SAST & Dependencies
