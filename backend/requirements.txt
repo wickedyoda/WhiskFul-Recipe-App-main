@@ -8,7 +8,7 @@ sqlalchemy>=2.0.54
 # mysql.connector. Removing that apt package (as the runtime stage already
 # does) or building outside the Docker image -- as CI does -- left the driver
 # absent and `import backend.app` failed with ModuleNotFoundError: mysql.
-mysql-connector-python>=9.0.0
+mysql-connector-python>=26.7.0
 python-multipart>=0.0.32
 PyJWT>=2.10.1
 pydantic>=2.13.5
