@@ -10,7 +10,7 @@ sqlalchemy>=2.0.54
 # absent and `import backend.app` failed with ModuleNotFoundError: mysql.
 mysql-connector-python>=9.0.0
 python-multipart>=0.0.32
-PyJWT>=2.10.1
+PyJWT>=2.15.0
 pydantic>=2.13.5
 pydantic-settings>=2.12.0
 yt-dlp>=2026.8.19
