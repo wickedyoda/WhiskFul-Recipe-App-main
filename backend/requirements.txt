@@ -9,7 +9,7 @@ sqlalchemy>=2.1.6
 # does) or building outside the Docker image -- as CI does -- left the driver
 # absent and `import backend.app` failed with ModuleNotFoundError: mysql.
 mysql-connector-python>=26.10.0
-python-multipart>=0.0.32
+python-multipart>=0.0.33
 PyJWT>=2.15.1
 pydantic>=2.14.1
 pydantic-settings>=2.16.1
