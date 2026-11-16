@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt as _jwt
@@ -31,7 +31,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(email: str, expires_delta: timedelta | None = None):
     payload = {"sub": email, "type": "access"}
-    expire = datetime.now(timezone.utc) + (expires_delta or ACCESS_TOKEN_EXPIRE)
+    expire = datetime.now(UTC) + (expires_delta or ACCESS_TOKEN_EXPIRE)
     payload["exp"] = int(expire.timestamp())
     return _jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -40,7 +40,7 @@ def create_password_reset_token(user_id: int) -> str:
     db = SessionLocal()
     try:
         raw = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + PASSWORD_RESET_EXPIRE
+        expires = datetime.now(UTC) + PASSWORD_RESET_EXPIRE
         token = PasswordResetToken(
             user_id=user_id,
             token=raw,
@@ -57,7 +57,7 @@ def consume_password_reset_token(token: str, new_password: str) -> bool:
     db = SessionLocal()
     try:
         entry = db.query(PasswordResetToken).filter(PasswordResetToken.token == token).first()
-        if not entry or entry.used or entry.expires_at < datetime.now(timezone.utc):
+        if not entry or entry.used or entry.expires_at < datetime.now(UTC):
             return False
         user = db.query(User).filter(User.id == entry.user_id).first()
         if not user:
@@ -67,7 +67,7 @@ def consume_password_reset_token(token: str, new_password: str) -> bool:
         record_password_history(user.id, user.hashed_password, db)
         user.hashed_password = hash_password(new_password)
         user.must_change_password = 0
-        user.password_changed_at = datetime.now(timezone.utc)
+        user.password_changed_at = datetime.now(UTC)
         entry.used = 1
         db.add(user)
         db.add(entry)
@@ -134,7 +134,7 @@ def change_password(user: User, current_password: str, new_password: str, db) ->
     record_password_history(user.id, user.hashed_password, db)
     user.hashed_password = new_hash
     user.must_change_password = 0
-    user.password_changed_at = datetime.now(timezone.utc)
+    user.password_changed_at = datetime.now(UTC)
     db.add(user)
     db.commit()
 
@@ -152,7 +152,7 @@ def change_password_admin(target: User, new_password: str, db) -> None:
     record_password_history(target.id, target.hashed_password, db)
     target.hashed_password = new_hash
     target.must_change_password = 0
-    target.password_changed_at = datetime.now(timezone.utc)
+    target.password_changed_at = datetime.now(UTC)
     db.add(target)
     db.commit()
 
