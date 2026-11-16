@@ -13,6 +13,13 @@ permissions:
   security-events: write
   packages: read
 
+# Ruff is pinned deliberately. It was previously installed unversioned, so CI
+# silently picked up new releases -- and new default rules -- which then failed
+# on unchanged code. Ruff 0.17.x began enforcing UP017 and UP042 as defaults and
+# turned every Dependabot PR red overnight. Pin it, and bump deliberately.
+env:
+  RUFF_VERSION: "0.17.4"
+
 jobs:
   lint-python:
     name: Python Lint
@@ -32,7 +39,7 @@ jobs:
         working-directory: ./backend
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          pip install "ruff==${RUFF_VERSION}"
 
       - name: Ruff check
         working-directory: ./backend
@@ -132,7 +139,7 @@ jobs:
         # Removed the duplicate ruff step: the Python Lint job already runs
         # `ruff check .` unmasked, and this copy was masked with `|| true`, so it
         # could only ever report, never gate.
-        run: pip install ruff && ruff check .
+        run: pip install "ruff==${RUFF_VERSION}" && ruff check .
 
       - name: Dependency audit
         working-directory: ./backend
