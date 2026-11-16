@@ -6,7 +6,7 @@ Uvicorn writes to stdout/stderr; in Docker we also capture to a file.
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 LOG_PATH = os.environ.get("LOG_PATH", "/media/app.log")
@@ -23,7 +23,7 @@ def read_recent_logs(hours: int = 2) -> str:
     if not log_path.exists():
         return "(No log file found at " + str(log_path) + ")"
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
     lines: list[str] = []
     try:
         with open(log_path, encoding="utf-8", errors="replace") as f:
@@ -40,7 +40,7 @@ def read_recent_logs(hours: int = 2) -> str:
         try:
             ts = datetime.strptime(
                 ts_part.replace("T", " "), "%Y-%m-%d %H:%M:%S"
-            ).replace(tzinfo=timezone.utc)
+            ).replace(tzinfo=UTC)
             if ts >= cutoff:
                 filtered.append(line)
         except ValueError:
@@ -54,7 +54,7 @@ def submit_logs_to_email() -> bool:
     from backend.services.email import send_email
 
     log_content = read_recent_logs(hours=2)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     subject = f"WhiskFul Diag Logs {now.strftime('%Y-%m-%d')}-{now.strftime('%H:%M')}"
     body = (
         f"<p>Recent application logs (last 2 hours):</p>"
