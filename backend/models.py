@@ -6,11 +6,11 @@ from sqlalchemy.sql import func
 from backend.database import Base
 
 
-class Store(str, enum.Enum):
+class Store(enum.StrEnum):
     local = "local"
     cloud = "cloud"
 
-class Role(str, enum.Enum):
+class Role(enum.StrEnum):
     admin = "admin"
     user = "user"
 
